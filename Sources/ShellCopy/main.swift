@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let automaticItem = NSMenuItem(title: "Automatically Join Wrapped Lines", action: #selector(toggleAutomatic), keyEquivalent: "")
     private let providerItem = NSMenuItem(title: "Processing Method", action: nil, keyEquivalent: "")
     private let fallbackItem = NSMenuItem(title: "Use Local Rules If AI Fails", action: #selector(toggleLocalFallback), keyEquivalent: "")
+    private let hybridItem = NSMenuItem(title: "Combine AI with Local Rules", action: #selector(toggleHybrid), keyEquivalent: "")
     private let cloudStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let diagnosticsItem = NSMenuItem(title: "Last Copy Details", action: nil, keyEquivalent: "")
     private let restoreItem = NSMenuItem(title: "Restore Original Text", action: #selector(restore), keyEquivalent: "")
@@ -33,7 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.delegate = self
-        for item in [automaticItem, fallbackItem, restoreItem] { item.target = self }
+        for item in [automaticItem, hybridItem, fallbackItem, restoreItem] { item.target = self }
         menu.addItem(automaticItem)
         let methods = NSMenu()
         methods.autoenablesItems = false
@@ -43,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         providerItem.submenu = methods
         menu.addItem(providerItem)
+        menu.addItem(hybridItem)
         menu.addItem(fallbackItem)
         for provider in CloudProvider.allCases {
             let item = NSMenuItem(title: "\(provider.serviceName) API Key…", action: #selector(configureAPIKey(_:)), keyEquivalent: "")
@@ -90,12 +92,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updates.refreshMenu()
         let provider = controller.cloudProvider
         automaticItem.state = controller.isEnabled ? .on : .off
-        providerItem.title = "Processing Method: " + (provider?.name ?? "Local Rules")
+        providerItem.title = "Processing Method: " + (provider.map {
+            $0.name + (controller.isHybridEnabled ? " + Rules" : "")
+        } ?? "Local Rules")
         for item in providerItems {
             item.state = (item.representedObject as? String) == (provider?.rawValue ?? "local") ? .on : .off
         }
         fallbackItem.state = controller.isLocalFallbackEnabled ? .on : .off
         fallbackItem.isEnabled = controller.isCloudEnabled
+        hybridItem.state = controller.isHybridEnabled ? .on : .off
+        hybridItem.isEnabled = controller.isCloudEnabled
         restoreItem.isEnabled = controller.canRestore
         if let keychainMessage {
             cloudStatusItem.title = keychainMessage
@@ -128,6 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleAutomatic() { controller.setEnabled(!controller.isEnabled) }
     @objc private func toggleLocalFallback() { controller.setLocalFallbackEnabled(!controller.isLocalFallbackEnabled) }
+    @objc private func toggleHybrid() { controller.setHybridEnabled(!controller.isHybridEnabled) }
     @objc private func selectProvider(_ sender: NSMenuItem) {
         guard let value = sender.representedObject as? String else { return }
         controller.setProvider(CloudProvider(rawValue: value))

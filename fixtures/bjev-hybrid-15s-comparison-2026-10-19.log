@@ -1,0 +1,95 @@
+provider=bjev timeout=15.0s mode=compare; timings in seconds; n/a may mean reused connection or unavailable phase
+reported-identifier: ERROR The request timed out 15.073440750000001 seconds
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=n/a wait-first-byte=n/a download=n/a reused=false proxy=false
+english-word: MISMATCH 1.026800708 seconds
+  same-response AI-only: MISMATCH
+  Hybrid mode: AI sees original text; rules resolve boundaries after validation.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.819, space-if-joined=0.6712 → join with space (AI decision; no applicable join rule)
+  network: dns=0.000 connect-including-tls=0.533 tls=0.239 upload=0.003 wait-first-byte=0.482 download=0.000 reused=false proxy=false
+path: PASS 0.930739458 seconds
+  same-response AI-only: PASS
+  Hybrid mode: AI sees original text; rules resolve boundaries after validation.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.8365, space-if-joined=0.4719 → join without space (whole-selection path/URL rule; AI did not veto)
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.000 wait-first-byte=0.928 download=0.000 reused=true proxy=false
+url: PASS 0.475822375 seconds
+  same-response AI-only: MISMATCH
+  Hybrid mode: AI sees original text; rules resolve boundaries after validation.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.5314, space-if-joined=0.3237 → join without space (whole-selection path/URL rule; AI did not veto)
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.000 wait-first-byte=0.472 download=0.001 reused=true proxy=false
+english-prose: PASS 1.043508708 seconds
+  same-response AI-only: PASS
+  Hybrid mode: AI sees original text; rules resolve boundaries after validation.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.811, space-if-joined=0.802 → join with space (AI decision; no applicable join rule)
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.000 wait-first-byte=1.040 download=0.000 reused=true proxy=false
+chinese-prose: MISMATCH 0.783286583 seconds
+  same-response AI-only: MISMATCH
+  Hybrid mode: AI sees original text; rules resolve boundaries after validation.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.7702, space-if-joined=0.6192 → keep break (AI decision; no applicable join rule)
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.001 wait-first-byte=0.779 download=0.001 reused=true proxy=false
+chinese-word: PASS 0.648185042 seconds
+  same-response AI-only: PASS
+  Hybrid mode: AI sees original text; rules resolve boundaries after validation.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.8417, space-if-joined=0.3273 → join without space (AI joins; rule avoids space between CJK characters)
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.000 wait-first-byte=0.645 download=0.000 reused=true proxy=false
+wrapped-list: PASS 0.4273895 seconds
+  same-response AI-only: MISMATCH
+  Hybrid mode: AI sees original text; rules resolve boundaries after validation.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.7272, space-if-joined=0.8198 → join without space (local wrap rule; AI did not veto)
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.000 wait-first-byte=0.422 download=0.001 reused=true proxy=false
+separate-items: PASS 2.328498292 seconds
+  same-response AI-only: PASS
+  Hybrid mode: AI sees original text; rules resolve boundaries after validation.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.0821, space-if-joined=0.83 → keep break (rule protects code, record, heading or list structure)
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.000 wait-first-byte=2.321 download=0.001 reused=true proxy=false
+separate-records: PASS 0.453239625 seconds
+  same-response AI-only: PASS
+  Hybrid mode: AI sees original text; rules resolve boundaries after validation.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.0626, space-if-joined=0.9104 → keep break (rule protects code, record, heading or list structure)
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.000 wait-first-byte=0.450 download=0.000 reused=true proxy=false
+fenced-code: PASS 0.518811 seconds
+  same-response AI-only: PASS
+  Hybrid mode: AI sees original text; rules resolve boundaries after validation.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.1277, space-if-joined=0.7597 → keep break (rule protects code, record, heading or list structure)
+  Lines 2–3: wrap=0.0791, space-if-joined=0.8355 → keep break (rule protects code, record, heading or list structure)
+  Lines 3–4: wrap=0.2151, space-if-joined=0.632 → keep break (rule protects code, record, heading or list structure)
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.001 wait-first-byte=0.515 download=0.000 reused=true proxy=false
+shell-continuation: PASS 0.744904042 seconds
+  same-response AI-only: PASS
+  Hybrid mode: AI sees original text; rules resolve boundaries after validation.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.5126, space-if-joined=0.7847 → keep break (rule protects code, record, heading or list structure)
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.000 wait-first-byte=0.742 download=0.000 reused=true proxy=false
+separate-headings: PASS 0.485970667 seconds
+  same-response AI-only: PASS
+  Hybrid mode: AI sees original text; rules resolve boundaries after validation.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.0576, space-if-joined=0.8566 → keep break (AI strong keep veto; wrap <= 0.2)
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.001 wait-first-byte=0.483 download=0.000 reused=true proxy=false
+blank-paragraph: PASS 6.275e-05 seconds
+  same-response AI-only: PASS
+  AI-led mode: no local pre-processing.
+  bjev not requested: Only blank-line or final boundaries.
+bjev: 11 passed, 2 mismatches, 1 request failures / 14
+Same-response comparison: AI-only 9 correct; hybrid 11 correct; regressions 0

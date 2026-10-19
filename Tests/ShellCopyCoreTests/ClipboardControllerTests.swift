@@ -15,6 +15,8 @@ final class ClipboardControllerTests: XCTestCase {
         pasteboard = try XCTUnwrap(NSPasteboard.withUniqueName() as NSPasteboard?, "Test process cannot access the macOS pasteboard server; run outside the agent sandbox.")
         suite = "ShellCopyTests." + UUID().uuidString
         defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        // Existing cases lock down AI-only behavior; hybrid has dedicated integration coverage.
+        defaults.set(false, forKey: ClipboardController.hybridKey)
     }
 
     override func tearDown() {
@@ -29,37 +31,176 @@ final class ClipboardControllerTests: XCTestCase {
     }
 
     @MainActor
-    func testDiagnosticsDistinguishLocalCompletionFromLowCloudScore() async throws {
-        for usesCloud in [false, true] {
+    func testHybridDefaultsOnPersistsOptOutAndCombinesSuccessfulAIResponse() async throws {
+        defaults.removeObject(forKey: ClipboardController.hybridKey)
+        let input = "seedmux-lite-\n  team"
+        let controller = ClipboardController(pasteboard: pasteboard, defaults: defaults,
+            cloudNormalize: { text in
+                XCTAssertEqual(text, input)
+                return NormalizationReport(text: text, provider: .bjev,
+                    decisions: [.init(nextLine: 2, joinProbability: 0.71, spaceProbability: 0.6)], noRequestReason: nil)
+            })
+        XCTAssertTrue(controller.isHybridEnabled)
+        controller.setEnabled(true)
+        controller.setProvider(.bjev)
+        copy(input)
+        let finished = expectation(description: "hybrid output applied")
+        controller.onStateChange = { if !controller.isProcessing { finished.fulfill() } }
+        controller.poll()
+        await fulfillment(of: [finished], timeout: 1)
+        controller.onStateChange = nil
+        XCTAssertEqual(pasteboard.string(forType: .string), "seedmux-lite-team")
+        XCTAssertTrue(controller.cloudMessage?.contains("AI + rules") == true)
+        XCTAssertTrue(controller.restoreOriginal())
+        XCTAssertEqual(pasteboard.string(forType: .string), input)
+        controller.setHybridEnabled(false)
+        XCTAssertFalse(ClipboardController(pasteboard: pasteboard, defaults: defaults).isHybridEnabled)
+    }
+
+    @MainActor
+    func testHybridModeChangeCancelsPendingCopyAndDoesNotRewriteBaseline() async throws {
+        let gate = CloudGate(started: expectation(description: "request started"))
+        let controller = ClipboardController(pasteboard: pasteboard, defaults: defaults,
+                                             cloudNormalize: { try await gate.run($0) })
+        controller.setEnabled(true)
+        controller.setProvider(.bjev)
+        copy(wrapped)
+        controller.poll()
+        await fulfillment(of: [gate.started], timeout: 1)
+        controller.setHybridEnabled(true)
+        gate.reply(.success(joined))
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertFalse(controller.isProcessing)
+        XCTAssertEqual(pasteboard.string(forType: .string), wrapped)
+        XCTAssertFalse(controller.canRestore)
+    }
+
+    func testPartialIdentifierSelectionJoinsAndRestoresExactOriginal() {
+        let input = "seedmux-lite-\r\n  team"
+        let controller = ClipboardController(pasteboard: pasteboard, defaults: defaults)
+        controller.setEnabled(true)
+        copy(input)
+        controller.poll()
+        XCTAssertEqual(pasteboard.string(forType: .string), "seedmux-lite-team")
+        XCTAssertTrue(controller.diagnosticDetails.contains("Local joins: 1"))
+        XCTAssertTrue(controller.restoreOriginal())
+        XCTAssertEqual(pasteboard.string(forType: .string), input)
+        let count = pasteboard.changeCount
+        controller.poll()
+        XCTAssertEqual(pasteboard.changeCount, count)
+    }
+
+    @MainActor
+    func testPurePasteMetadataReachesAIAndSurvivesNormalizationAndUndo() async throws {
+        let markers = ["com.sindresorhus.Pure-Paste.hasRun", "x.nspasteboard.ModifiedType"]
+        for names in [[markers[0]], [markers[1]], markers] {
+            var calls = 0
             let controller = ClipboardController(pasteboard: pasteboard, defaults: defaults,
-                cloudNormalize: { text in
-                    if usesCloud {
-                        return NormalizationReport(text: text, localJoins: 0, provider: .bjev,
-                            scores: [.init(nextLine: 2, score: 0.79)], noRequestReason: nil)
-                    }
-                    return try await SystemOneNormalizer(provider: .bjev).normalizeWithReport(text, apiKey: "synthetic-key")
+                cloudNormalize: { [self] text in
+                    calls += 1
+                    XCTAssertEqual(text, wrapped)
+                    return NormalizationReport(text: joined, provider: .bjev,
+                        decisions: [.init(nextLine: 2, joinProbability: 1, spaceProbability: 1)],
+                        noRequestReason: nil)
                 })
             controller.setEnabled(true)
             controller.setProvider(.bjev)
-            copy(usesCloud ? "We need\nmore checks." : wrapped)
+            controller.setHybridEnabled(true)
+            let item = NSPasteboardItem()
+            item.setString(wrapped, forType: .string)
+            for name in names { item.setData(Data(), forType: .init(name)) }
+            pasteboard.clearContents()
+            XCTAssertTrue(pasteboard.writeObjects([item]))
+            let finished = expectation(description: "marked copy handled")
+            controller.onStateChange = { if !controller.isProcessing { finished.fulfill() } }
+            controller.poll()
+            await fulfillment(of: [finished], timeout: 1)
+            controller.onStateChange = nil
+            XCTAssertEqual(calls, 1)
+            XCTAssertEqual(pasteboard.string(forType: .string), joined)
+            for name in names { XCTAssertEqual(pasteboard.data(forType: .init(name)), Data()) }
+            controller.poll()
+            XCTAssertEqual(calls, 1, "Our own write must not start another request")
+            XCTAssertTrue(controller.restoreOriginal())
+            XCTAssertEqual(pasteboard.string(forType: .string), wrapped)
+            for name in names { XCTAssertEqual(pasteboard.data(forType: .init(name)), Data()) }
+        }
+    }
+
+    func testPurePasteMarkersDoNotBypassPrivateOrUnknownFormatProtection() {
+        for blocked in ["org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType",
+                        "org.nspasteboard.AutoGeneratedType", "com.agilebits.onepassword",
+                        "com.example.private-object"] {
+            let controller = ClipboardController(pasteboard: pasteboard, defaults: defaults,
+                cloudNormalize: { _ in
+                    XCTFail("Protected clipboard reached AI")
+                    throw JudgmentError.unavailable
+                })
+            controller.setEnabled(true)
+            controller.setProvider(.bjev)
+            let item = NSPasteboardItem()
+            item.setString(wrapped, forType: .string)
+            for type in ["com.sindresorhus.Pure-Paste.hasRun", "x.nspasteboard.ModifiedType", blocked] {
+                item.setData(Data(), forType: .init(type))
+            }
+            pasteboard.clearContents()
+            XCTAssertTrue(pasteboard.writeObjects([item]))
+            let count = pasteboard.changeCount
+            controller.poll()
+            XCTAssertFalse(controller.isProcessing)
+            XCTAssertEqual(pasteboard.changeCount, count)
+            XCTAssertFalse(controller.canRestore)
+            XCTAssertTrue(controller.diagnosticDetails.contains { $0.contains(blocked) })
+            XCTAssertFalse(controller.diagnosticDetails.contains { $0.contains(wrapped) })
+        }
+    }
+
+    @MainActor
+    func testDiagnosticsDistinguishSkippedRequestFromLowCloudScore() async throws {
+        for usesCloud in [false, true] {
+            let controller = ClipboardController(pasteboard: pasteboard, defaults: defaults,
+                cloudNormalize: { text in
+                    NormalizationReport(text: text, provider: .bjev,
+                        decisions: usesCloud ? [.init(nextLine: 2, joinProbability: 0.79, spaceProbability: 1)] : [],
+                        noRequestReason: usesCloud ? nil : "No line breaks.")
+                })
+            controller.setEnabled(true)
+            controller.setProvider(.bjev)
+            copy(usesCloud ? "We need\nmore checks." : "single line")
             let finished = expectation(description: "diagnostics ready")
             controller.onStateChange = { if !controller.isProcessing { finished.fulfill() } }
             controller.poll()
             await fulfillment(of: [finished], timeout: 1)
             controller.onStateChange = nil
             XCTAssertEqual(controller.cloudMessage, usesCloud
-                ? "bjev returned: 0/1 joins; local: 0."
-                : "Local rules: 1 joins; bjev not requested.")
+                ? "bjev returned: 0/1 joins (AI-led)."
+                : "bjev not requested; original text kept.")
             XCTAssertTrue(controller.diagnosticDetails.contains { $0.hasPrefix("Processing time: ") })
-            XCTAssertTrue(controller.diagnosticDetails.contains(usesCloud ? "Clipboard unchanged." : "Result written to clipboard."))
+            XCTAssertTrue(controller.diagnosticDetails.contains("Clipboard unchanged."))
             if usesCloud {
-                XCTAssertTrue(controller.diagnosticDetails.contains("Lines 1–2: 0.79 → keep break"))
+                XCTAssertTrue(controller.diagnosticDetails.contains { $0.contains("wrap=0.79") && $0.contains("below threshold") })
             }
             copy("new single line")
             controller.setProvider(nil)
             XCTAssertTrue(controller.diagnosticDetails.isEmpty)
             XCTAssertNil(controller.cloudMessage)
         }
+    }
+
+    func testAIFailureDefaultsToKeepingOriginalAndExplicitFallbackPersists() {
+        let controller = ClipboardController(pasteboard: pasteboard, defaults: defaults)
+        XCTAssertFalse(controller.isLocalFallbackEnabled)
+        controller.setEnabled(true)
+        controller.setProvider(.jev)
+        copy("seedmux-lite-\n  team")
+        let count = pasteboard.changeCount
+        controller.poll()
+        XCTAssertEqual(pasteboard.changeCount, count)
+        XCTAssertFalse(controller.canRestore)
+        XCTAssertTrue(controller.diagnosticDetails.contains("Local fallback disabled."))
+        controller.setLocalFallbackEnabled(true)
+        let reopened = ClipboardController(pasteboard: pasteboard, defaults: defaults)
+        XCTAssertTrue(reopened.isLocalFallbackEnabled)
     }
 
     func testWarpPartialJoinAndRestorePreserveOriginalBreaks() {
@@ -110,6 +251,7 @@ final class ClipboardControllerTests: XCTestCase {
 
     func testMissingBjevKeyUsesBjevStatusAndLocalFallback() {
         let controller = ClipboardController(pasteboard: pasteboard, defaults: defaults)
+        controller.setLocalFallbackEnabled(true)
         controller.setEnabled(true)
         controller.setProvider(.bjev)
         copy(wrapped)
@@ -456,6 +598,28 @@ final class ClipboardControllerTests: XCTestCase {
     }
 
     @MainActor
+    func testSuccessfulCloudAnswerBetweenOldAndNewDeadlinesIsApplied() async throws {
+        let gate = CloudGate(started: expectation(description: "request started"))
+        let controller = ClipboardController(pasteboard: pasteboard, defaults: defaults,
+                                             cloudNormalize: { try await gate.run($0) })
+        controller.setEnabled(true)
+        controller.setCloudEnabled(true)
+        controller.setLocalFallbackEnabled(false)
+        copy(wrapped)
+        controller.poll()
+        await fulfillment(of: [gate.started], timeout: 1)
+        try await Task.sleep(for: .seconds(2.1))
+        let finished = expectation(description: "result within five seconds applied")
+        controller.onStateChange = { if !controller.isProcessing { finished.fulfill() } }
+        gate.reply(.success(joined))
+        await fulfillment(of: [finished], timeout: 1)
+        controller.onStateChange = nil
+        XCTAssertEqual(pasteboard.string(forType: .string), joined)
+        XCTAssertTrue(controller.restoreOriginal())
+        XCTAssertEqual(pasteboard.string(forType: .string), wrapped)
+    }
+
+    @MainActor
     func testSuccessfulCloudAnswerAfterDeadlineIsDiscarded() async throws {
         let gate = CloudGate(started: expectation(description: "request started"))
         let controller = ClipboardController(pasteboard: pasteboard, defaults: defaults,
@@ -489,7 +653,8 @@ final class ClipboardControllerTests: XCTestCase {
         let gate = CloudGate(started: expectation(description: "request started"))
         let controller = ClipboardController(pasteboard: pasteboard, defaults: defaults,
                                              cloudNormalize: { try await gate.run($0) })
-        XCTAssertTrue(controller.isLocalFallbackEnabled)
+        XCTAssertFalse(controller.isLocalFallbackEnabled)
+        controller.setLocalFallbackEnabled(true)
         controller.setEnabled(true)
         controller.setCloudEnabled(true)
         copy(input)
@@ -516,6 +681,7 @@ final class ClipboardControllerTests: XCTestCase {
             let gate = CloudGate(started: expectation(description: "request started"))
             let controller = ClipboardController(pasteboard: pasteboard, defaults: defaults,
                                                  cloudNormalize: { try await gate.run($0) })
+            controller.setLocalFallbackEnabled(true)
             controller.setEnabled(true)
             controller.setCloudEnabled(true)
             copy(wrapped)
@@ -539,6 +705,7 @@ final class ClipboardControllerTests: XCTestCase {
         let input = "  • " + first + "\n    release."
         let controller = ClipboardController(pasteboard: pasteboard, defaults: defaults,
                                              cloudNormalize: { _ in throw JudgmentError.regionRestricted })
+        controller.setLocalFallbackEnabled(true)
         controller.setEnabled(true)
         controller.setCloudEnabled(true)
         copy(input)
@@ -557,6 +724,7 @@ final class ClipboardControllerTests: XCTestCase {
         let input = "- " + first + "\n  - nested release item"
         let controller = ClipboardController(pasteboard: pasteboard, defaults: defaults,
                                              cloudNormalize: { _ in throw JudgmentError.regionRestricted })
+        controller.setLocalFallbackEnabled(true)
         controller.setEnabled(true)
         controller.setCloudEnabled(true)
         copy(input)
@@ -583,7 +751,7 @@ private final class CloudGate {
             self.continuation = continuation
             started.fulfill()
         }
-        return NormalizationReport(text: result, localJoins: 0, provider: .jev, scores: [], noRequestReason: nil)
+        return NormalizationReport(text: result, provider: .jev, decisions: [], noRequestReason: nil)
     }
     func reply(_ result: Result<String, Error>) {
         continuation!.resume(with: result)

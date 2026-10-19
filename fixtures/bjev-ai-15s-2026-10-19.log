@@ -1,0 +1,85 @@
+provider=bjev timeout=15.0s; timings in seconds; n/a may mean reused connection or unavailable phase
+reported-identifier: MISMATCH 1.345587417 seconds
+  AI-led mode: no local pre-processing.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.7141, space-if-joined=0.5996 → keep break (join below threshold)
+  network: dns=0.001 connect-including-tls=0.933 tls=0.728 upload=0.003 wait-first-byte=0.396 download=0.001 reused=false proxy=false
+english-word: PASS 0.497060375 seconds
+  AI-led mode: no local pre-processing.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.8358, space-if-joined=0.3999 → join without space
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.001 wait-first-byte=0.492 download=0.000 reused=true proxy=false
+path: PASS 0.586456666 seconds
+  AI-led mode: no local pre-processing.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.8682, space-if-joined=0.461 → join without space
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.000 wait-first-byte=0.584 download=0.000 reused=true proxy=false
+url: MISMATCH 0.512942167 seconds
+  AI-led mode: no local pre-processing.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.3596, space-if-joined=0.2899 → keep break (join below threshold)
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.000 wait-first-byte=0.511 download=0.000 reused=true proxy=false
+english-prose: PASS 0.353170625 seconds
+  AI-led mode: no local pre-processing.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.8264, space-if-joined=0.8214 → join with space
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.001 wait-first-byte=0.349 download=0.001 reused=true proxy=false
+chinese-prose: MISMATCH 0.429907167 seconds
+  AI-led mode: no local pre-processing.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.7642, space-if-joined=0.5841 → keep break (join below threshold)
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.000 wait-first-byte=0.427 download=0.000 reused=true proxy=false
+chinese-word: PASS 0.39399575 seconds
+  AI-led mode: no local pre-processing.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.8759, space-if-joined=0.364 → join without space
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.000 wait-first-byte=0.390 download=0.001 reused=true proxy=false
+wrapped-list: MISMATCH 0.481544542 seconds
+  AI-led mode: no local pre-processing.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.7683, space-if-joined=0.7791 → keep break (join below threshold)
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.000 wait-first-byte=0.479 download=0.001 reused=true proxy=false
+separate-items: PASS 0.341331958 seconds
+  AI-led mode: no local pre-processing.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.0787, space-if-joined=0.8016 → keep break (join below threshold)
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.000 wait-first-byte=0.339 download=0.000 reused=true proxy=false
+separate-records: PASS 0.320601041 seconds
+  AI-led mode: no local pre-processing.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.0633, space-if-joined=0.8769 → keep break (join below threshold)
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.000 wait-first-byte=0.318 download=0.000 reused=true proxy=false
+fenced-code: PASS 0.455637334 seconds
+  AI-led mode: no local pre-processing.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.0814, space-if-joined=0.7631 → keep break (join below threshold)
+  Lines 2–3: wrap=0.0611, space-if-joined=0.8201 → keep break (join below threshold)
+  Lines 3–4: wrap=0.1637, space-if-joined=0.6087 → keep break (join below threshold)
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.001 wait-first-byte=0.453 download=0.000 reused=true proxy=false
+shell-continuation: PASS 0.39936325 seconds
+  AI-led mode: no local pre-processing.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.5126, space-if-joined=0.7847 → keep break (join below threshold)
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.000 wait-first-byte=0.395 download=0.002 reused=true proxy=false
+separate-headings: PASS 0.340898208 seconds
+  AI-led mode: no local pre-processing.
+  bjev response validated; threshold: 0.8
+  Line numbers refer to original copied text.
+  Lines 1–2: wrap=0.054, space-if-joined=0.8485 → keep break (join below threshold)
+  network: dns=n/a connect-including-tls=n/a tls=n/a upload=0.001 wait-first-byte=0.337 download=0.000 reused=true proxy=false
+blank-paragraph: PASS 9.4083e-05 seconds
+  AI-led mode: no local pre-processing.
+  bjev not requested: Only blank-line or final boundaries.
+bjev: 10 passed, 4 mismatches, 0 request failures / 14

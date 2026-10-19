@@ -1,37 +1,62 @@
 import Foundation
 
+enum LineBoundaryAction {
+    case keep, join, space
+
+    var description: String {
+        switch self {
+        case .keep: return "keep break"
+        case .join: return "join without space"
+        case .space: return "join with space"
+        }
+    }
+}
+
 /// Returned with the text, but only metadata is retained by the controller.
 public struct NormalizationReport {
-    public struct BoundaryScore {
-        /// One-based line number after local normalization, before cloud joins.
+    public struct BoundaryDecision {
+        /// One-based line number in the original copy.
         public let nextLine: Int
-        public let score: Double
+        public let joinProbability: Double
+        public let spaceProbability: Double
+        var resolvedAction: LineBoundaryAction? = nil
+        var resolutionReason: String? = nil
+
+        func appliedAction(threshold: Double) -> LineBoundaryAction {
+            if let resolvedAction { return resolvedAction }
+            guard joinProbability >= threshold else { return .keep }
+            return spaceProbability >= 0.5 ? .space : .join
+        }
     }
 
     public let text: String
-    public let localJoins: Int
     public let provider: CloudProvider
-    public let scores: [BoundaryScore]
+    public let decisions: [BoundaryDecision]
     public let noRequestReason: String?
+    public var usesLocalRules = false
 
     public var summary: String {
         if noRequestReason != nil {
-            return "Local rules: \(localJoins) joins; \(provider.name) not requested."
+            return "\(provider.name) not requested; original text kept."
         }
-        let accepted = scores.filter { $0.score >= provider.joinThreshold }.count
-        return "\(provider.name) returned: \(accepted)/\(scores.count) joins; local: \(localJoins)."
+        let accepted = decisions.filter { $0.appliedAction(threshold: provider.joinThreshold) != .keep }.count
+        return "\(provider.name) returned: \(accepted)/\(decisions.count) joins (\(usesLocalRules ? "AI + rules" : "AI-led"))."
     }
 
     public var details: [String] {
-        var rows = ["Local joins: \(localJoins)"]
+        var rows = [usesLocalRules
+            ? "Hybrid mode: AI sees original text; rules resolve boundaries after validation."
+            : "AI-led mode: no local pre-processing."]
         if let noRequestReason {
             rows.append("\(provider.name) not requested: " + noRequestReason)
         } else {
             rows.append("\(provider.name) response validated; threshold: \(provider.joinThreshold)")
-            rows.append("Line numbers refer to text after local joins.")
-            rows += scores.map { boundary in
-                let decision = boundary.score >= provider.joinThreshold ? "join" : "keep break"
-                return "Lines \(boundary.nextLine - 1)–\(boundary.nextLine): \(boundary.score) → \(decision)"
+            rows.append("Line numbers refer to original copied text.")
+            rows += decisions.map { boundary in
+                let applied = boundary.appliedAction(threshold: provider.joinThreshold)
+                let reason = boundary.resolutionReason.map { " (" + $0 + ")" }
+                    ?? (applied == .keep ? " (join below threshold)" : "")
+                return "Lines \(boundary.nextLine - 1)–\(boundary.nextLine): wrap=\(boundary.joinProbability), space-if-joined=\(boundary.spaceProbability) → \(applied.description)\(reason)"
             }
         }
         return rows

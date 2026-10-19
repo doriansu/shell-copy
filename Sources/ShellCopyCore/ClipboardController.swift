@@ -6,10 +6,17 @@ public final class ClipboardController {
     public static let cloudEnabledKey = "useJevCloudJudgment"
     public static let providerKey = "normalizationProvider"
     public static let localFallbackKey = "useLocalRulesWhenJevFails"
+    public static let hybridKey = "combineAIWithLocalRules"
+    // Preserve known processing markers so other clipboard tools need not process our write again.
+    private static let processingMarkers: Set<NSPasteboard.PasteboardType> = [
+        .init("com.sindresorhus.Pure-Paste.hasRun"),
+        .init("x.nspasteboard.ModifiedType")
+    ]
     public private(set) var isEnabled: Bool
     public private(set) var cloudProvider: CloudProvider?
     public var isCloudEnabled: Bool { cloudProvider != nil }
     public private(set) var isLocalFallbackEnabled: Bool
+    public private(set) var isHybridEnabled: Bool
     public private(set) var isProcessing = false
     public private(set) var cloudMessage: String?
     public private(set) var diagnosticDetails: [String] = []
@@ -39,7 +46,8 @@ public final class ClipboardController {
             // Preserve the existing Jev opt-in when upgrading; new installs stay local.
             cloudProvider = defaults.bool(forKey: Self.cloudEnabledKey) ? .jev : nil
         }
-        isLocalFallbackEnabled = defaults.object(forKey: Self.localFallbackKey) as? Bool ?? true
+        isLocalFallbackEnabled = defaults.object(forKey: Self.localFallbackKey) as? Bool ?? false
+        isHybridEnabled = defaults.object(forKey: Self.hybridKey) as? Bool ?? true
         observedCount = pasteboard.changeCount
     }
 
@@ -74,6 +82,12 @@ public final class ClipboardController {
         resetBaseline()
     }
 
+    public func setHybridEnabled(_ enabled: Bool) {
+        isHybridEnabled = enabled
+        defaults.set(enabled, forKey: Self.hybridKey)
+        resetBaseline()
+    }
+
     private func resetBaseline() {
         invalidatePending()
         if observedCount != pasteboard.changeCount { original = nil }
@@ -98,11 +112,12 @@ public final class ClipboardController {
         original = nil
         defer { onStateChange?() }
         guard isEnabled else { return }
-        guard let snapshot = readEligibleItem(),
+        var skipReason = "Unsupported clipboard format, size limit, or clipboard changed during read."
+        guard let snapshot = readEligibleItem(onSkip: { skipReason = $0 }),
               let text = pasteboard.string(forType: .string), text.utf8.count <= 1_048_576,
               pasteboard.changeCount == count else {
             cloudMessage = "Copy skipped; no cloud request."
-            diagnosticDetails = ["Unsupported clipboard format, size limit, or clipboard changed during read."]
+            diagnosticDetails = [skipReason]
             return
         }
         if !isCloudEnabled {
@@ -139,13 +154,16 @@ public final class ClipboardController {
             defer { self.onStateChange?() }
             // Check the actual pasteboard, even when a new copy arrived between polls.
             guard self.isEnabled, self.isCloudEnabled, self.pasteboard.changeCount == count else { return }
+            let resolved = result.map { report in
+                self.isHybridEnabled ? report.combiningLocalRules(for: text) : report
+            }
             guard clock.now <= deadline else {
                 self.handleCloudFailure(.timedOut, text: text, snapshot: snapshot, count: count)
                 self.diagnosticDetails.append("Processing deadline exceeded; response discarded.")
                 self.diagnosticDetails.append(self.timing(started.duration(to: clock.now)))
                 return
             }
-            switch result {
+            switch resolved {
             case .success(let report):
                 let changed = self.apply(report.text, to: text, snapshot: snapshot, count: count)
                 self.cloudMessage = report.summary
@@ -193,6 +211,9 @@ public final class ClipboardController {
         guard joined != text, pasteboard.changeCount == count else { return false }
         let item = NSPasteboardItem()
         guard item.setString(joined, forType: .string) else { return false }
+        for (type, data) in snapshot where Self.processingMarkers.contains(type) {
+            guard item.setData(data, forType: type) else { return false }
+        }
         if replace(with: item, expectedCount: count) {
             original = snapshot
             return true
@@ -214,7 +235,7 @@ public final class ClipboardController {
         return replace(with: item, expectedCount: observedCount)
     }
 
-    private func readEligibleItem() -> [(NSPasteboard.PasteboardType, Data)]? {
+    private func readEligibleItem(onSkip: (String) -> Void) -> [(NSPasteboard.PasteboardType, Data)]? {
         guard let items = pasteboard.pasteboardItems, items.count == 1,
               let item = items.first, item.types.contains(.string) else { return nil }
         // An allowlist avoids rewriting file URLs, images, private/concealed clipboard items,
@@ -225,7 +246,11 @@ public final class ClipboardController {
             NSPasteboard.PasteboardType("public.utf16-external-plain-text"),
             NSPasteboard.PasteboardType("NSStringPboardType")
         ]
-        guard item.types.allSatisfy({ allowed.contains($0) }) else { return nil }
+        let unsupported = item.types.filter { !allowed.contains($0) && !Self.processingMarkers.contains($0) }
+        guard unsupported.isEmpty else {
+            onSkip("Unsupported or protected clipboard types: " + unsupported.map(\.rawValue).sorted().joined(separator: ", "))
+            return nil
+        }
         var snapshot: [(NSPasteboard.PasteboardType, Data)] = []
         var size = 0
         for type in item.types {

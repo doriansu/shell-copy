@@ -1,6 +1,6 @@
 import Foundation
 
-/// Deliberately narrow: long prose followed by consistently space-indented continuations.
+/// Deliberately narrow: indented prose wraps and standalone hyphenated names.
 /// Plain text does not carry the distinction between hard and soft line breaks.
 public enum LineNormalizer {
     public static func normalize(_ text: String) -> String {
@@ -10,6 +10,7 @@ public enum LineNormalizer {
               !text.contains("```"), !text.contains("~~~") else { return text }
 
         let lines = splitLines(text)
+        if let identifier = normalizeIdentifierSelection(lines) { return identifier }
         // A terminal selection can omit the opening line's padding while keeping
         // it on every later paragraph. Infer padding only from a proven prose wrap.
         let openingBlock = Array(lines.prefix { !$0.body.trimmingCharacters(in: .whitespaces).isEmpty })
@@ -28,6 +29,29 @@ public enum LineNormalizer {
             }
         }
         return result + normalizeBlock(block, isStartOfCopy: result.isEmpty, copyIndent: copyIndent)
+    }
+
+    private static func normalizeIdentifierSelection(_ lines: [(body: String, ending: String)]) -> String? {
+        var content = lines
+        if content.last?.body == "" { content.removeLast() }
+        guard content.count > 1 else { return nil }
+        let indent = content[1].body.prefix(while: { $0 == " " }).count
+        guard indent >= 2 else { return nil }
+
+        var joined = ""
+        for (index, line) in content.enumerated() {
+            let padding = line.body.prefix(while: { $0 == " " }).count
+            guard padding == (index == 0 ? 0 : indent) else { return nil }
+            let fragment = String(line.body.dropFirst(padding))
+            guard fragment.range(of: #"^[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*-?$"#,
+                                 options: .regularExpression) != nil,
+                  index == content.count - 1 || fragment.hasSuffix("-") else { return nil }
+            joined += fragment
+        }
+        // Require the whole selection to be one name, never a prose/code subrange.
+        guard joined.range(of: #"^[A-Za-z][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)+$"#,
+                           options: .regularExpression) != nil else { return nil }
+        return joined + (content.last?.ending ?? "")
     }
 
     // Shared with Jev so surviving boundaries keep their exact spelling in either mode.

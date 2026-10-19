@@ -1,0 +1,72 @@
+[
+  {
+    "id": "reported-identifier",
+    "text": "seedmux-lite-\n  team",
+    "expected": "seedmux-lite-team"
+  },
+  {
+    "id": "english-word",
+    "text": "interoper\n  ability",
+    "expected": "interoperability"
+  },
+  {
+    "id": "path",
+    "text": "/Users/demo/.codex/skills/seedmux-lite-\n  team/SKILL.md",
+    "expected": "/Users/demo/.codex/skills/seedmux-lite-team/SKILL.md"
+  },
+  {
+    "id": "url",
+    "text": "https://example.test/docs/\n  getting-started",
+    "expected": "https://example.test/docs/getting-started"
+  },
+  {
+    "id": "english-prose",
+    "text": "The gardener decided to plant\n  more flowers beside the path.",
+    "expected": "The gardener decided to plant more flowers beside the path."
+  },
+  {
+    "id": "chinese-prose",
+    "text": "孩子们坐在树下听老师讲述\n  关于星星的故事。",
+    "expected": "孩子们坐在树下听老师讲述关于星星的故事。"
+  },
+  {
+    "id": "chinese-word",
+    "text": "开发环\n  境",
+    "expected": "开发环境"
+  },
+  {
+    "id": "wrapped-list",
+    "text": "• 这份发布检查报告详细说明本次上线之前仍需核对的历史数据\n    校验结果。",
+    "expected": "• 这份发布检查报告详细说明本次上线之前仍需核对的历史数据校验结果。"
+  },
+  {
+    "id": "separate-items",
+    "text": "- Buy milk\n- Call Alice",
+    "expected": "- Buy milk\n- Call Alice"
+  },
+  {
+    "id": "separate-records",
+    "text": "INFO first request complete\nINFO second request complete",
+    "expected": "INFO first request complete\nINFO second request complete"
+  },
+  {
+    "id": "fenced-code",
+    "text": "```swift\nlet value = 1\nprint(value)\n```",
+    "expected": "```swift\nlet value = 1\nprint(value)\n```"
+  },
+  {
+    "id": "shell-continuation",
+    "text": "printf \"%s\\n\" \\\n  hello",
+    "expected": "printf \"%s\\n\" \\\n  hello"
+  },
+  {
+    "id": "separate-headings",
+    "text": "Garden observations\nKitchen supplies",
+    "expected": "Garden observations\nKitchen supplies"
+  },
+  {
+    "id": "blank-paragraph",
+    "text": "First paragraph.\n\nSecond paragraph.\n",
+    "expected": "First paragraph.\n\nSecond paragraph.\n"
+  }
+]

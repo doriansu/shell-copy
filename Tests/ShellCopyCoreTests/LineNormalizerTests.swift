@@ -2,6 +2,42 @@ import XCTest
 @testable import ShellCopyCore
 
 final class LineNormalizerTests: XCTestCase {
+    func testReportedPartialIdentifierSelectionJoinsWithoutAddingSpace() {
+        XCTAssertEqual(LineNormalizer.normalize("seedmux-lite-\n  team"), "seedmux-lite-team")
+    }
+
+    func testIdentifierWrapsKeepHyphensAndFinalLineEndings() {
+        for padding in ["  ", "    ", "        "] {
+            for ending in ["\n", "\r\n"] {
+                for trailing in ["", ending] {
+                    let input = "seedmux-" + ending + padding + "lite-" + ending + padding + "team" + trailing
+                    let expected = "seedmux-lite-team" + trailing
+                    XCTAssertEqual(LineNormalizer.normalize(input), expected)
+                    XCTAssertEqual(LineNormalizer.normalize(expected), expected)
+                }
+            }
+        }
+        XCTAssertEqual(LineNormalizer.normalize("my_skill-v2-\n  beta_1"), "my_skill-v2-beta_1")
+    }
+
+    func testIdentifierRulePreservesAmbiguousAndStructuredSelections() {
+        let samples = [
+            "seedmux-lite-\nteam", "seedmux-lite-\n team", "seedmux-lite-\n\tteam",
+            " seedmux-lite-\n  team", "seedmux-\n  lite-\n    team",
+            "seedmux-lite\n  team", "seedmux-lite- \n  team", "seedmux-lite-\n  team ",
+            "seedmux-lite-\n\n  team", "seedmux-lite-\n  team\n\n",
+            "seedmux-lite-\n  team\n  another", "seedmux-lite-\n  team-",
+            "seedmux-lite-\n  team\t", "seedmux-lite-\n  team\r",
+            "seedmux-lite-\n  team member", "Heading\nseedmux-lite-\n  team",
+            "Heading\n\nseedmux-lite-\n  team", "- seedmux-lite-\n  team",
+            "echo seedmux-lite-\n  team", "value = seedmux-lite-\n  team",
+            "seedmux-lite-\n  --team", "seedmux-lite-\n  team;",
+            "2026-10-\n  18", "```\nseedmux-lite-\n  team\n```",
+            "seedmux-lite-\n  team\0"
+        ]
+        for sample in samples { XCTAssertEqual(LineNormalizer.normalize(sample), sample, sample) }
+    }
+
     func testReportedLoadTestParagraphsJoinWithoutRemovingParagraphBreaks() {
         let first = "CDP 侧已完成本轮压测：对 cg.cdp.thrift.GetSegmentData 发压，通过客群 23142 查询标签 102987，按该标签配置，最终调用下游"
         let next = "ad.ecp.uni_prom.HitDouble11Promotion 接口。"

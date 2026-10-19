@@ -7,7 +7,7 @@ public enum CloudProvider: String, CaseIterable {
     public var serviceName: String { self == .jev ? "TypeSafe" : "bjev (ByteDance)" }
     public var model: String { self == .jev ? "jev-1.13.0" : "bjev" }
     // Separate decision policies: these numbers are not measured accuracy guarantees.
-    // bjev's initial 0.80 policy was checked on the synthetic fixtures; see README.
+    // Applied to the visual-wrap probability. Spacing is a separate AI judgment.
     public var joinThreshold: Double { self == .jev ? 0.98 : 0.80 }
 
     var endpoint: URL {

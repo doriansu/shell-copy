@@ -1,0 +1,93 @@
+{
+  "date": "2026-10-18",
+  "provider": "bjev",
+  "protocol": "two noul questions per boundary: join and conditional spacing",
+  "fixture": "fixtures/ai-boundaries.json",
+  "join_threshold": 0.8,
+  "spacing_threshold": 0.5,
+  "timeout_seconds": 2,
+  "summary": {
+    "cases": 14,
+    "correct_outputs": 6,
+    "mismatches": 2,
+    "request_timeouts": 6,
+    "skipped_requests": 1
+  },
+  "limitations": [
+    "Development fixtures were reused while iterating prompts; not an independent benchmark.",
+    "The six correct outputs were keep cases, including one blank-paragraph copy that skipped the network.",
+    "No positive join case passed in this run. AI-led routing is implemented, but output quality is not accepted.",
+    "Jev was not live-tested. No user clipboard content was read or sent."
+  ],
+  "cases": [
+    {
+      "id": "reported-identifier",
+      "result": "mismatch",
+      "wrap": 0.7126,
+      "space_if_joined": 0.613,
+      "applied": "keep"
+    },
+    {
+      "id": "english-word",
+      "result": "timeout"
+    },
+    {
+      "id": "path",
+      "result": "timeout"
+    },
+    {
+      "id": "url",
+      "result": "timeout"
+    },
+    {
+      "id": "english-prose",
+      "result": "timeout"
+    },
+    {
+      "id": "chinese-prose",
+      "result": "timeout"
+    },
+    {
+      "id": "chinese-word",
+      "result": "timeout"
+    },
+    {
+      "id": "wrapped-list",
+      "result": "mismatch",
+      "wrap": 0.7697,
+      "space_if_joined": 0.7793,
+      "applied": "keep"
+    },
+    {
+      "id": "separate-items",
+      "result": "pass",
+      "applied": "keep"
+    },
+    {
+      "id": "separate-records",
+      "result": "pass",
+      "applied": "keep"
+    },
+    {
+      "id": "fenced-code",
+      "result": "pass",
+      "applied": "keep"
+    },
+    {
+      "id": "shell-continuation",
+      "result": "pass",
+      "applied": "keep"
+    },
+    {
+      "id": "separate-headings",
+      "result": "pass",
+      "applied": "keep"
+    },
+    {
+      "id": "blank-paragraph",
+      "result": "pass",
+      "applied": "keep",
+      "request_sent": false
+    }
+  ]
+}

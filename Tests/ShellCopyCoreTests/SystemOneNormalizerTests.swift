@@ -3,347 +3,291 @@ import XCTest
 @testable import ShellCopyCore
 
 final class SystemOneNormalizerTests: XCTestCase {
-    func testReportIncludesActualScoresAndThresholdDecisions() async throws {
-        for provider in CloudProvider.allCases {
-            let session = makeSession { _ in
-                (200, try JSONSerialization.data(withJSONObject: [
-                    "model": provider.model,
-                    "answers": [
-                        "join_3": ["type": "noul", "noul": 0.7999],
-                        "join_4": ["type": "noul", "noul": provider.joinThreshold]
-                    ]
-                ]))
-            }
-            defer { session.invalidateAndCancel() }
-            let opening = "This detailed deployment report explains the remaining work for the next"
-            let input = opening + "\n  release.\n\nWe need\nmore checks\nbefore launch."
-            let report = try await SystemOneNormalizer(provider: provider, session: session)
-                .normalizeWithReport(input, apiKey: "synthetic-key")
-            XCTAssertEqual(report.localJoins, 1)
-            XCTAssertNil(report.noRequestReason)
-            XCTAssertEqual(report.scores.map(\.nextLine), [4, 5])
-            XCTAssertEqual(report.scores.map(\.score), [0.7999, provider.joinThreshold])
-            XCTAssertEqual(report.text, opening + " release.\n\nWe need\nmore checks before launch.")
-            XCTAssertEqual(report.summary, "\(provider.name) returned: 1/2 joins; local: 1.")
-            XCTAssertTrue(report.details.contains("Lines 3–4: 0.7999 → keep break"))
-            XCTAssertFalse(report.details.joined().contains("synthetic-key"))
-            XCTAssertFalse(report.details.joined().contains("We need"))
-        }
-    }
-
-    func testReportExplainsWhyCloudWasNotRequested() async throws {
-        let opening = "This detailed deployment report explains the remaining work for the next"
-        let samples: [(String, String, Int)] = [
-            (opening + "\n  release.", "No remaining line breaks.", 1),
-            ("Title\n\nParagraph.", "No eligible wrap boundaries.", 0),
-            ("```\ncode\n```", "Protected text or code fence.", 0),
-            (String(repeating: "x", count: 12_289) + "\ny", "Text exceeds 12 KiB.", 0),
-            (Array(repeating: "word", count: 66).joined(separator: "\n"), "More than 64 candidate boundaries.", 0)
-        ]
-        let session = makeSession { _ in
-            XCTFail("Skipped requests must never reach the network")
-            throw URLError(.badURL)
+    func testAIReceivesOriginalIdentifierAndCanKeepItsBreak() async throws {
+        let input = "seedmux-lite-\n  team"
+        var requests = 0
+        let session = makeSession { request in
+            requests += 1
+            let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: Self.body(of: request)) as? [String: Any])
+            let state = try XCTUnwrap(body["state"] as? [String: Any])
+            let lines = try XCTUnwrap(state["lines"] as? [[String: String]])
+            XCTAssertEqual(lines.map { $0["text"] }, ["seedmux-lite-", "  team"])
+            return (200, Data(#"{"model":"jev-1.13.0","answers":{"join_1":{"type":"noul","noul":0},"space_1":{"type":"noul","noul":0}}}"#.utf8))
         }
         defer { session.invalidateAndCancel() }
-        for (input, reason, joins) in samples {
-            let report = try await SystemOneNormalizer(provider: .bjev, session: session)
-                .normalizeWithReport(input, apiKey: "synthetic-key")
-            XCTAssertEqual(report.noRequestReason, reason)
-            XCTAssertEqual(report.localJoins, joins)
-            XCTAssertTrue(report.scores.isEmpty)
-            XCTAssertEqual(report.summary, "Local rules: \(joins) joins; bjev not requested.")
+        let output = try await SystemOneNormalizer(session: session).normalize(input, apiKey: "synthetic-key")
+        XCTAssertEqual(requests, 1)
+        XCTAssertEqual(output, input)
+    }
+
+    private struct ExpectedAnswer {
+        let wrap: Double
+        let space: Double
+    }
+
+    private func answer(_ action: LineBoundaryAction, probability: Double = 1) -> ExpectedAnswer {
+        .init(wrap: action == .keep ? 0 : probability, space: action == .space ? 1 : 0)
+    }
+
+    private func rawAnswers(_ answers: [String: ExpectedAnswer]) -> [String: SystemOneResponse.Answer] {
+        var result: [String: SystemOneResponse.Answer] = [:]
+        for (key, answer) in answers {
+            result[key] = .init(type: "noul", noul: answer.wrap)
+            result[key.replacingOccurrences(of: "join_", with: "space_")] = .init(type: "noul", noul: answer.space)
+        }
+        return result
+    }
+
+    private func response(_ provider: CloudProvider, _ answers: [String: ExpectedAnswer]) throws -> Data {
+        let objects = rawAnswers(answers).mapValues { ["type": $0.type, "noul": $0.noul] as [String: Any] }
+        return try JSONSerialization.data(withJSONObject: ["model": provider.model, "answers": objects])
+    }
+
+    private func apply(_ plan: LineJoinPlan, _ answers: [String: ExpectedAnswer],
+                       threshold: Double = CloudProvider.jev.joinThreshold) throws -> String {
+        plan.applying(try plan.validatedDecisions(rawAnswers(answers)), threshold: threshold)
+    }
+
+    func testAllNonblankBoundariesReachAIRegardlessOfSyntax() throws {
+        let samples = [
+            "seedmux-lite-\n  team", "/Users/demo/skills/\n  seedmux-lite-team",
+            "开发环\n境", "interoper\nability", "We need.\nMore checks.",
+            "说明：\n- 第一项", "description:\n  value", "# Heading\nparagraph",
+            "- first item\n- second item", "• 正文内容\n\t\t续行",
+            "echo hello \\\n  world", "INFO first\nINFO second", "a | b\nc | d",
+            "```swift\nlet value = 1\nprint(value)\n```", "~~~text\na\nb\n~~~"
+        ]
+        for text in samples {
+            let plan = try XCTUnwrap(LineJoinPlan(text), text)
+            XCTAssertEqual(plan.boundaries, Array(1..<plan.lines.count), text)
+            let keep = Dictionary(uniqueKeysWithValues: plan.boundaries.map { ("join_\($0)", answer(.keep)) })
+            XCTAssertEqual(try apply(plan, keep), text)
         }
     }
 
-    func testCopyPaddingJoinsLaterParagraphsLocallyInBothCloudModes() async throws {
+    func testThreeActionsPreserveOnlyUneditedBytesAndUseModelSpacing() throws {
+        let input = "  /tmp/seedmux-lite-  \r\n\t team\n  and\r\n   more  checks\n"
+        let plan = try XCTUnwrap(LineJoinPlan(input))
+        XCTAssertEqual(try apply(plan, ["join_1": answer(.join), "join_2": answer(.keep), "join_3": answer(.space)]),
+                       "  /tmp/seedmux-lite-team\n  and more  checks\n")
+        // Spacing comes from the answer, not a Chinese/English heuristic.
+        for (input, action, expected) in [
+            ("interoper\n  ability", LineBoundaryAction.join, "interoperability"),
+            ("hello\nworld", .space, "hello world"),
+            ("使用\nAPI", .space, "使用 API"),
+            ("seedmux-lite-\n  team", .join, "seedmux-lite-team"),
+            ("https://example.test/\npath", .join, "https://example.test/path")
+        ] {
+            XCTAssertEqual(try apply(XCTUnwrap(LineJoinPlan(input)), ["join_1": answer(action)]), expected)
+        }
+    }
+
+    func testBlankSeparatorsFinalEndingsAndOriginalLineNumbersStayExact() throws {
+        let input = "one\r\n  two\r\n \nthree\n\tfour\n"
+        let plan = try XCTUnwrap(LineJoinPlan(input))
+        XCTAssertEqual(plan.boundaries, [1, 4])
+        let decisions = try plan.validatedDecisions(rawAnswers(["join_1": answer(.space), "join_4": answer(.keep)]))
+        XCTAssertEqual(decisions.map(\.nextLine), [2, 5])
+        XCTAssertEqual(plan.applying(decisions, threshold: 0.98), "one two\r\n \nthree\n\tfour\n")
+    }
+
+    func testModelCanVetoEveryLocallyRecognizedWrapInBothModes() async throws {
         let first = "这份发布检查报告详细说明本次上线之前仍需核对的历史数据"
-        let input = first + "\n  校验结果。\n\n  " + first + "\n  校验结果。"
-        let expected = first + "校验结果。\n\n  " + first + "校验结果。"
-        for provider in CloudProvider.allCases {
-            let session = makeSession { _ in
-                XCTFail("Copy padding should be resolved locally without sending text")
-                throw URLError(.badURL)
-            }
-            defer { session.invalidateAndCancel() }
-            let result = try await SystemOneNormalizer(provider: provider, session: session)
-                .normalize(input, apiKey: "synthetic-key")
-            XCTAssertEqual(result, expected)
-        }
-    }
-
-    func testWarpColonIsJudgedAfterLocalWrapJoinsInBothCloudModes() async throws {
-        let first = "我需要写一个客群创编的skill 这是我之前梳理的客群skill原子能力："
-        let next = "notes/2026-09-24-segment-authoring-skill-research.md，你结合代码帮我出"
-        let last = "一个技术方案，使用AI unslop这个skill写作"
-        for provider in CloudProvider.allCases {
-            for probability in [0.1, 1.0] {
+        for input in ["seedmux-lite-\n  team", first + "\n  校验结果。", "• " + first + "\n    校验结果。"] {
+            XCTAssertNotEqual(LineNormalizer.normalize(input), input)
+            for provider in CloudProvider.allCases {
                 var requests = 0
                 let session = makeSession { request in
                     requests += 1
                     let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: Self.body(of: request)) as? [String: Any])
                     let state = try XCTUnwrap(body["state"] as? [String: Any])
                     let lines = try XCTUnwrap(state["lines"] as? [[String: String]])
-                    XCTAssertEqual(lines.map { $0["text"] }, [first, "  " + next + last])
-                    let questions = try XCTUnwrap(body["questions"] as? [String: Any])
-                    XCTAssertEqual(Set(questions.keys), ["join_1"])
-                    return (200, try JSONSerialization.data(withJSONObject: [
-                        "model": provider.model,
-                        "answers": ["join_1": ["type": "noul", "noul": probability]]
-                    ]))
+                    XCTAssertEqual(lines.map { $0["text"] }, LineNormalizer.splitLines(input).map { $0.body })
+                    return (200, try self.response(provider, ["join_1": self.answer(.keep)]))
                 }
                 defer { session.invalidateAndCancel() }
-                let result = try await SystemOneNormalizer(provider: provider, session: session)
-                    .normalize(first + "\n  " + next + "\n  " + last, apiKey: "synthetic-key")
+                let report = try await SystemOneNormalizer(provider: provider, session: session)
+                    .normalizeWithReport(input, apiKey: "synthetic-key")
                 XCTAssertEqual(requests, 1)
-                XCTAssertEqual(result, first + (probability == 1 ? "" : "\n  ") + next + last)
+                XCTAssertEqual(report.text, input)
+                XCTAssertEqual(report.decisions.count, 1)
             }
         }
     }
 
-    func testColonCandidatesStillProtectStructuredContent() throws {
-        for text in ["说明：\n- 第一项", "说明：\n  echo hello", "说明：\n  {\"key\":1}",
-                     "说明：\n\n另一段", "description:\n  value", "说明：\n\t缩进正文"] {
-            XCTAssertNil(LineJoinPlan(text))
-        }
-        for colon in [":", "："] {
-            let input = "The report explains the following" + colon + "\r\n  more checks."
-            let plan = try XCTUnwrap(LineJoinPlan(input))
-            XCTAssertEqual(plan.boundaries, [1])
-            XCTAssertEqual(try plan.applying(["join_1": answer(0)]), input)
-            XCTAssertEqual(try plan.applying(["join_1": answer(1)]),
-                           "The report explains the following" + colon + (colon == ":" ? " " : "") + "more checks.")
-        }
-    }
-
-    func testClippedBulletSelectionJoinsInBothCloudModesWithoutARequest() async throws {
-        let first = "• 当前必要修复：统一参与链路的加锁顺序。批量启停应在修改配置和业务表之前，按 ID 顺序获取全部 profile 锁；不能只给回调排序。同时核实并限制 MNS 等待时"
-        let next = "间、批次大小和并发数，补 MySQL 并发回归。"
+    func testPreviouslyReportedExamplesAreReconstructedByModelActions() async throws {
+        let first = "我需要写一个客群创编的skill 这是我之前梳理的客群skill原子能力："
+        let next = "notes/2026-09-24-segment-authoring-skill-research.md，你结合代码帮我出"
+        let last = "一个技术方案，使用AI unslop这个skill写作"
+        let cases: [(String, [String: ExpectedAnswer], String)] = [
+            ("seedmux-lite-\n  team", ["join_1": answer(.join)], "seedmux-lite-team"),
+            (first + "\n  " + next + "\n  " + last,
+             ["join_1": answer(.keep), "join_2": answer(.join)], first + "\n  " + next + last),
+            ("• 这是当前段落内被截断的时\n    间说明。\n• 下一项。",
+             ["join_1": answer(.join), "join_2": answer(.keep)], "• 这是当前段落内被截断的时间说明。\n• 下一项。"),
+            ("First wrapped\n  sentence.\n\n  Another wrapped\n  sentence.",
+             ["join_1": answer(.space), "join_4": answer(.space)], "First wrapped sentence.\n\n  Another wrapped sentence.")
+        ]
         for provider in CloudProvider.allCases {
-            let session = makeSession { _ in
-                XCTFail("Clipped list wraps should be resolved locally")
-                throw URLError(.badURL)
+            for (input, answers, expected) in cases {
+                let session = makeSession { _ in (200, try self.response(provider, answers)) }
+                defer { session.invalidateAndCancel() }
+                let result = try await SystemOneNormalizer(provider: provider, session: session).normalize(input, apiKey: "synthetic-key")
+                XCTAssertEqual(result, expected)
             }
-            defer { session.invalidateAndCancel() }
-            let result = try await SystemOneNormalizer(provider: provider, session: session)
-                .normalize(first + "\n    " + next, apiKey: "synthetic-key")
-            XCTAssertEqual(result, first + next)
         }
     }
 
-    func testListWrapsJoinLocallyInBothCloudModesWithoutSendingText() async throws {
-        let first = "  • **KR3：**建立创编与 Oncall 场景的效果评测和发布回归机制，沉淀不少于 50 条真实需求及历史失败用例，覆盖正确性、任务完成率和执行耗时，核心 Skill 与"
-        let next = "模型配置变更均完成回归验收。"
+    func testWrapThresholdAndSpacingAreIndependentModelJudgments() throws {
+        let plan = try XCTUnwrap(LineJoinPlan("some\n  words"))
         for provider in CloudProvider.allCases {
-            let session = makeSession { _ in
-                XCTFail("Recognized list wraps should be resolved locally")
-                throw URLError(.badURL)
+            for probability in [0.7999, 0.8, 0.8848, 0.9799, 0.98, 1] {
+                let selected = answer(.space, probability: probability)
+                let result = try apply(plan, ["join_1": selected], threshold: provider.joinThreshold)
+                XCTAssertEqual(result, probability >= provider.joinThreshold ? "some words" : "some\n  words")
             }
-            defer { session.invalidateAndCancel() }
-            let result = try await SystemOneNormalizer(provider: provider, session: session)
-                .normalize("O3：技术优化\n\n" + first + "\n\t\t    " + next, apiKey: "synthetic-key")
-            XCTAssertEqual(result, "O3：技术优化\n\n" + first + next)
         }
+        for (probability, expected) in [(0.0, "somewords"), (0.4999, "somewords"), (0.5, "some words"), (1.0, "some words")] {
+            XCTAssertEqual(try apply(plan, ["join_1": .init(wrap: 1, space: probability)]), expected)
+        }
+
     }
 
-    func testReportedLongParagraphJoinsLocallyBeforeAnUncertainCloudJudgment() async throws {
-        let first = "密钥已导入应用钥匙串，处理方式已设为 bjev，48 项回归测试通过，新版也已打包。原来的自动合行设置"
-        let second = "仍然开启，本地兜底默认开启。当前旧进程还在运行，需要重新打开新版，才能加载新菜单和配置。"
+    func testReportIncludesAllActionScoresAndAppliedDecisionWithoutContent() async throws {
         for provider in CloudProvider.allCases {
-            let session = makeSession { _ in
-                XCTFail("A wrap covered by the local rules must not need a cloud judgment")
-                return (200, try JSONSerialization.data(withJSONObject: [
-                    "model": provider.model,
-                    "answers": ["join_1": ["type": "noul", "noul": 0.6753]]
-                ]))
-            }
+            let answers = ["join_1": answer(.join, probability: 0.79), "join_4": answer(.space)]
+            let session = makeSession { _ in (200, try self.response(provider, answers)) }
             defer { session.invalidateAndCancel() }
-            let result = try await SystemOneNormalizer(provider: provider, session: session)
-                .normalize(first + "\n  " + second, apiKey: "synthetic-key")
-            XCTAssertEqual(result, first + second)
+            let report = try await SystemOneNormalizer(provider: provider, session: session)
+                .normalizeWithReport("seedmux-lite-\n  team\n\nmore\n  checks", apiKey: "synthetic-key")
+            XCTAssertNil(report.noRequestReason)
+            XCTAssertEqual(report.decisions.map(\.nextLine), [2, 5])
+            XCTAssertEqual(report.text, "seedmux-lite-\n  team\n\nmore checks")
+            XCTAssertEqual(report.summary, "\(provider.name) returned: 1/2 joins (AI-led).")
+            XCTAssertTrue(report.details.contains { $0.contains("Lines 1–2:") && $0.contains("wrap=0.79") && $0.contains("below threshold") })
+            XCTAssertTrue(report.details.contains { $0.contains("Lines 4–5:") && $0.contains("join with space") })
+            XCTAssertTrue(report.details.contains("AI-led mode: no local pre-processing."))
+            XCTAssertFalse(report.details.joined().contains("synthetic-key"))
+            XCTAssertFalse(report.details.joined().contains("seedmux"))
         }
     }
 
-    func testCloudStillJudgesRemainingBoundariesAfterLocalJoins() async throws {
-        let first = "This detailed garden journal explains how the new flowers started to"
-        let localBlock = first + "\n  grow."
-        let locallyJoined = first + " grow."
-        for probability in [0.1, 0.99] {
-            var requests = 0
-            let session = makeSession { request in
-                requests += 1
-                let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: Self.body(of: request)) as? [String: Any])
-                let state = try XCTUnwrap(body["state"] as? [String: Any])
-                let lines = try XCTUnwrap(state["lines"] as? [[String: String]])
-                XCTAssertEqual(lines[0]["text"], locallyJoined)
-                let questions = try XCTUnwrap(body["questions"] as? [String: Any])
-                XCTAssertEqual(Set(questions.keys), ["join_3"])
-                return (200, try JSONSerialization.data(withJSONObject: [
-                    "model": "bjev", "answers": ["join_3": ["type": "noul", "noul": probability]]
-                ]))
-            }
-            defer { session.invalidateAndCancel() }
-            let result = try await SystemOneNormalizer(provider: .bjev, session: session)
-                .normalize(localBlock + "\n\nWe need\nmore flowers.", apiKey: "synthetic-key")
-            XCTAssertEqual(requests, 1)
-            XCTAssertEqual(result, locallyJoined + (probability > 0.8 ? "\n\nWe need more flowers." : "\n\nWe need\nmore flowers."))
-        }
-    }
-
-    func testProviderThresholdsJoinBjevWrapsWithoutChangingJevPolicy() async throws {
-        for provider in CloudProvider.allCases {
-            for probability in [0.7999, 0.8, 0.8848, 0.98] {
-                let session = makeSession { _ in
-                    (200, try JSONSerialization.data(withJSONObject: [
-                        "model": provider.model,
-                        "answers": ["join_1": ["type": "noul", "noul": probability]]
-                    ]))
-                }
-                let result = try await SystemOneNormalizer(provider: provider, session: session)
-                    .normalize("我们准备沿着花园的小路\n  继续向前散步。", apiKey: "synthetic-key")
-                let shouldJoin = provider == .bjev ? probability >= 0.8 : probability >= 0.98
-                XCTAssertEqual(result, shouldJoin ? "我们准备沿着花园的小路继续向前散步。" : "我们准备沿着花园的小路\n  继续向前散步。")
-                session.invalidateAndCancel()
-            }
-        }
-    }
-
-    func testBjevUsesItsOwnEndpointKeyAndModelWithSharedBoundaryValidation() async throws {
-        let session = makeSession { request in
-            XCTAssertEqual(request.url?.absoluteString, "https://bjev.bytedance.net/v1/systemone")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer bjev-test-key")
-            let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: Self.body(of: request)) as? [String: Any])
-            XCTAssertEqual(body["model"] as? String, "bjev")
-            return (200, Data(#"{"model":"bjev","answers":{"join_1":{"type":"noul","noul":0.99},"join_2":{"type":"noul","noul":0.1}},"usage":{"input_tokens":95,"output_tokens":197},"latency_ms":111.0}"#.utf8))
-        }
-        defer { session.invalidateAndCancel() }
-        let output = try await SystemOneNormalizer(provider: .bjev, session: session)
-            .normalize("本轮需要\n继续核对\n  等待确认。", apiKey: "bjev-test-key")
-        XCTAssertEqual(output, "本轮需要继续核对\n  等待确认。")
-    }
-
-    func testBjevRejectsResponsesFromAnotherModel() async {
+    func testIneligibleCopiesRemainUnmodifiedWithoutLocalPassOrNetwork() async throws {
+        let locallyJoinable = "This detailed deployment report explains the remaining work for the next\n  release."
+        let samples = [
+            ("one line", "No line breaks."),
+            ("Title\n\nParagraph.\n", "Only blank-line or final boundaries."),
+            ("a\nb\0", "Text contains NUL."),
+            (locallyJoinable + "\n\n" + String(repeating: "x", count: 12_289), "Text exceeds 12 KiB."),
+            (locallyJoinable + "\n\n" + Array(repeating: "word", count: 66).joined(separator: "\n"), "More than 64 candidate boundaries.")
+        ]
         let session = makeSession { _ in
-            (200, Data(#"{"model":"jev-1.13.0","answers":{"join_1":{"type":"noul","noul":1}}}"#.utf8))
-        }
-        defer { session.invalidateAndCancel() }
-        do {
-            _ = try await SystemOneNormalizer(provider: .bjev, session: session).normalize("We need\nmore checks.", apiKey: "test-key")
-            XCTFail("Accepted the wrong provider model")
-        } catch JudgmentError.invalidResponse {} catch { XCTFail("Unexpected error: \(error)") }
-    }
-
-    private func answer(_ probability: Double) -> SystemOneResponse.Answer {
-        .init(type: "noul", noul: probability)
-    }
-
-    func testReportedShellCopyTextHasAJoinableBoundary() throws {
-        let first = "直接执行：已修复并重新打包。请退出旧版，再打开新版 Shell Copy (build/Shell Copy.app)，即可使用"
-        let next = "Command-V 粘贴、Command-A 全选。"
-        let plan = try XCTUnwrap(LineJoinPlan(first + "\n  " + next))
-        XCTAssertEqual(plan.boundaries, [1])
-        XCTAssertEqual(try plan.applying(["join_1": answer(0.99)]), first + next)
-    }
-
-    func testRegionRestrictionHasActionableError() async throws {
-        let session = makeSession { _ in
-            (451, Data(#"{"title":"Typesafe is not available in your region.","status":451}"#.utf8))
-        }
-        defer { session.invalidateAndCancel() }
-        do {
-            _ = try await SystemOneNormalizer(session: session).normalize("We need\nmore checks.", apiKey: "test-key")
-            XCTFail("Region restriction accepted")
-        } catch {
-            XCTAssertTrue(error.localizedDescription.contains("region"), error.localizedDescription)
-            XCTAssertTrue(error.localizedDescription.contains("451"), error.localizedDescription)
-        }
-    }
-
-    func testShortUnindentedChineseCanJoinAndLowProbabilityBoundaryStaysExact() throws {
-        let input = "本轮需要  继续\r\n核对历史数据\n  等待确认。\r\n \r\n另一段。"
-        let plan = try XCTUnwrap(LineJoinPlan(input))
-        XCTAssertEqual(plan.boundaries, [1, 2])
-        XCTAssertEqual(try plan.applying(["join_1": answer(0.99), "join_2": answer(0.7)]),
-                       "本轮需要  继续核对历史数据\n  等待确认。\r\n \r\n另一段。")
-    }
-
-    func testEnglishChainPreservesLeadingIndentAndInternalColumns() throws {
-        let input = "    We  need\n        more checks\n before release.\n"
-        let plan = try XCTUnwrap(LineJoinPlan(input))
-        XCTAssertEqual(try plan.applying(["join_1": answer(1), "join_2": answer(0.98)]),
-                       "    We  need more checks before release.\n")
-        XCTAssertEqual(try plan.applying(["join_1": answer(0.979), "join_2": answer(0)]), input)
-    }
-
-    func testStructuredContentAndExplicitBreaksAreNeverCandidates() throws {
-        for text in [
-            "```\nWe need\nmore checks\n```", "~~~text\na\nb\n~~~",
-            "- We need\n  more checks", "1. We need\nmore checks",
-            "# Release\nchecklist", "We need\n\tmore checks",
-            "echo this command\nkeeps its break", "INFO release\nmore checks",
-            "description: We need\nmore checks", "We need\n{more checks}",
-            "We need\n\nmore checks", "We need.\nMore checks.", "We need\nmore checks\0",
-            "x", "", String(repeating: "a", count: 12_289) + "\nb",
-            Array(repeating: "some words", count: 66).joined(separator: "\n")
-        ] {
-            XCTAssertNil(LineJoinPlan(text), text.prefix(100).description)
-        }
-        let input = "- Keep this list\n  and its wrap\n\nWe need\nmore checks."
-        let plan = try XCTUnwrap(LineJoinPlan(input))
-        XCTAssertEqual(plan.boundaries, [4])
-        XCTAssertEqual(try plan.applying(["join_4": answer(1), "join_1": answer(1)]),
-                       "- Keep this list\n  and its wrap\n\nWe need more checks.")
-    }
-
-    func testIncompleteOrInvalidAnswersNeverPartiallyApply() throws {
-        let plan = try XCTUnwrap(LineJoinPlan("We need\nmore checks\nbefore release."))
-        for answers in [
-            ["join_1": answer(1)],
-            ["join_1": answer(1), "join_2": answer(1.01)],
-            ["join_1": answer(1), "join_2": answer(-0.1)],
-            ["join_1": answer(1), "join_2": answer(.nan)],
-            ["join_1": answer(1), "join_2": .init(type: "choice", noul: 1)]
-        ] {
-            XCTAssertThrowsError(try plan.applying(answers))
-        }
-    }
-
-    func testHTTPContractAndMixedLanguageResult() async throws {
-        let session = makeSession { request in
-            XCTAssertEqual(request.url?.absoluteString, "https://api.typesafe.ai/v1/systemone")
-            XCTAssertEqual(request.httpMethod, "POST")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-key")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
-            XCTAssertEqual(request.timeoutInterval, 2)
-            let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: Self.body(of: request)) as? [String: Any])
-            XCTAssertEqual(body["model"] as? String, "jev-1.13.0")
-            let state = try XCTUnwrap(body["state"] as? [String: Any])
-            let lines = try XCTUnwrap(state["lines"] as? [[String: String]])
-            XCTAssertEqual(lines[0], ["id": "L0", "text": "Hive 校验需要"])
-            let questions = try XCTUnwrap(body["questions"] as? [String: [String: Any]])
-            XCTAssertEqual(Set(questions.keys), ["join_1", "join_2"])
-            XCTAssertEqual(questions["join_1"]?["type"] as? String, "noul")
-            XCTAssertTrue((questions["join_1"]?["instructions"] as? String)?.contains("L0") == true)
-            return (200, Data(#"{"model":"jev-1.13.0","answers":{"join_1":{"type":"noul","noul":0.99},"join_2":{"type":"noul","noul":0.99}}}"#.utf8))
-        }
-        defer { session.invalidateAndCancel() }
-        let result = try await SystemOneNormalizer(session: session).normalize("Hive 校验需要\n继续核对\n结果。", apiKey: "test-key")
-        XCTAssertEqual(result, "Hive 校验需要继续核对结果。")
-    }
-
-    func testIneligibleTextAndMissingKeyDoNotSendRequests() async throws {
-        let session = makeSession { _ in
-            XCTFail("Ineligible text or missing keys must not send requests")
+            XCTFail("Skipped requests must not reach the network")
             throw URLError(.badURL)
         }
         defer { session.invalidateAndCancel() }
         let client = SystemOneNormalizer(session: session)
-        let original = "- List\n  continuation"
-        let result = try await client.normalize(original, apiKey: "test-key")
-        XCTAssertEqual(result, original)
+        for (input, reason) in samples {
+            let report = try await client.normalizeWithReport(input, apiKey: "synthetic-key")
+            XCTAssertEqual(report.noRequestReason, reason)
+            XCTAssertEqual(report.text, input)
+            XCTAssertTrue(report.decisions.isEmpty)
+            XCTAssertEqual(report.summary, "Jev not requested; original text kept.")
+        }
+        for key in ["", "  ", "bad\nkey", "bad\rkey"] {
+            do {
+                _ = try await client.normalize("seedmux-lite-\n  team", apiKey: key)
+                XCTFail("Missing or malformed key accepted")
+            } catch JudgmentError.missingAPIKey {} catch { XCTFail("Unexpected error: \(error)") }
+        }
+        XCTAssertNotNil(LineJoinPlan(Array(repeating: "word", count: 65).joined(separator: "\n")))
+    }
+
+    func testInvalidOrMissingJudgmentsRejectWholeCopyBeforeEditing() throws {
+        let plan = try XCTUnwrap(LineJoinPlan("one\ntwo\nthree"))
+        let valid = rawAnswers(["join_1": answer(.space), "join_2": answer(.join)])
+        for key in valid.keys {
+            var missing = valid
+            missing.removeValue(forKey: key)
+            XCTAssertThrowsError(try plan.validatedDecisions(missing))
+            for bad in [SystemOneResponse.Answer(type: "choice", noul: 1),
+                        .init(type: "noul", noul: -0.1), .init(type: "noul", noul: 1.1),
+                        .init(type: "noul", noul: .nan), .init(type: "noul", noul: .infinity)] {
+                var invalid = valid
+                invalid[key] = bad
+                XCTAssertThrowsError(try plan.validatedDecisions(invalid))
+            }
+        }
+        var extra = valid
+        extra["join_3"] = .init(type: "noul", noul: 1)
+        XCTAssertThrowsError(try plan.validatedDecisions(extra))
+    }
+
+    func testHTTPDualJudgmentContractAndOriginalContextForBothProviders() async throws {
+        for provider in CloudProvider.allCases {
+            let input = "# Heading\nseedmux-lite-\n  team\n\nmore\n  checks"
+            let session = makeSession { request in
+                XCTAssertEqual(request.url, provider.endpoint)
+                XCTAssertEqual(request.httpMethod, "POST")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-key")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+                XCTAssertEqual(request.timeoutInterval, 5)
+                let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: Self.body(of: request)) as? [String: Any])
+                XCTAssertEqual(body["model"] as? String, provider.model)
+                let state = try XCTUnwrap(body["state"] as? [String: Any])
+                let lines = try XCTUnwrap(state["lines"] as? [[String: String]])
+                XCTAssertEqual(lines.map { $0["text"] }, LineNormalizer.splitLines(input).map { $0.body })
+                let questions = try XCTUnwrap(body["questions"] as? [String: [String: Any]])
+                XCTAssertEqual(Set(questions.keys), ["join_1", "space_1", "join_2", "space_2", "join_5", "space_5"])
+                for question in questions.values {
+                    XCTAssertEqual(question["type"] as? String, "noul")
+                    let criteria = try XCTUnwrap(question["criteria"] as? [String: String])
+                    XCTAssertEqual(Set(criteria.keys), ["true", "false"])
+                }
+                let candidates = try XCTUnwrap(questions["space_2"]?["criteria"] as? [String: String])
+                XCTAssertEqual(candidates["false"], "seedmux-lite-team")
+                XCTAssertEqual(candidates["true"], "seedmux-lite- team")
+                XCTAssertTrue((questions["join_2"]?["instructions"] as? String)?.contains("L1") == true)
+                return (200, try self.response(provider, ["join_1": self.answer(.keep), "join_2": self.answer(.join), "join_5": self.answer(.space)]))
+            }
+            defer { session.invalidateAndCancel() }
+            let output = try await SystemOneNormalizer(provider: provider, session: session).normalize(input, apiKey: "test-key")
+            XCTAssertEqual(output, "# Heading\nseedmux-lite-team\n\nmore checks")
+        }
+    }
+
+    func testEvaluationTimeoutOverrideDoesNotChangeAppDefault() async throws {
+        let session = makeSession { request in
+            XCTAssertEqual(request.timeoutInterval, 15)
+            return (200, try self.response(.bjev, ["join_1": self.answer(.join)]))
+        }
+        defer { session.invalidateAndCancel() }
+        let output = try await SystemOneNormalizer(provider: .bjev, session: session, requestTimeout: 15)
+            .normalize("seedmux-lite-\n  team", apiKey: "test-key")
+        XCTAssertEqual(output, "seedmux-lite-team")
+        XCTAssertEqual(SystemOneNormalizer.timeout, 5)
+    }
+
+    func testWrongProviderModelIsRejected() async {
+        let session = makeSession { _ in (200, try self.response(.jev, ["join_1": self.answer(.join)])) }
+        defer { session.invalidateAndCancel() }
         do {
-            _ = try await client.normalize("We need\nmore checks.", apiKey: "")
-            XCTFail("Missing key accepted")
-        } catch JudgmentError.missingAPIKey {} catch { XCTFail("Unexpected error: \(error)") }
+            _ = try await SystemOneNormalizer(provider: .bjev, session: session).normalize("seedmux-lite-\n  team", apiKey: "test-key")
+            XCTFail("Accepted the wrong provider model")
+        } catch JudgmentError.invalidResponse {} catch { XCTFail("Unexpected error: \(error)") }
+    }
+
+    func testRegionRestrictionHasActionableError() async {
+        let session = makeSession { _ in (451, Data("private server body".utf8)) }
+        defer { session.invalidateAndCancel() }
+        do {
+            _ = try await SystemOneNormalizer(session: session).normalize("some\nwords", apiKey: "test-key")
+            XCTFail("Region restriction accepted")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("region"))
+            XCTAssertTrue(error.localizedDescription.contains("451"))
+            XCTAssertFalse(error.localizedDescription.contains("private"))
+        }
     }
 
     func testServiceErrorsAndMalformedResponsesAreRejected() async throws {
