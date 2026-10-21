@@ -120,14 +120,16 @@ public final class ClipboardController {
             diagnosticDetails = [skipReason]
             return
         }
-        if !isCloudEnabled {
+        if !isCloudEnabled || isHybridEnabled {
             let clock = ContinuousClock()
             let started = clock.now
             let joined = normalize(text)
-            let changed = apply(joined, to: text, snapshot: snapshot, count: count)
-            cloudMessage = changed ? "Local rules joined wrapped lines; no cloud request." : "Local rules kept text unchanged; no cloud request."
-            diagnosticDetails = ["Local joins: \(NormalizationReport.joinCount(from: text, to: joined))", timing(started.duration(to: clock.now))]
-            return
+            if !isCloudEnabled || joined != text {
+                let changed = apply(joined, to: text, snapshot: snapshot, count: count)
+                cloudMessage = changed ? "Local rules joined wrapped lines; no cloud request." : "Local rules kept text unchanged; no cloud request."
+                diagnosticDetails = ["Local joins: \(NormalizationReport.joinCount(from: text, to: joined))", timing(started.duration(to: clock.now))]
+                return
+            }
         }
         guard let cloudNormalize else {
             handleCloudFailure(.missingAPIKey, text: text, snapshot: snapshot, count: count)

@@ -31,12 +31,12 @@ final class ClipboardControllerTests: XCTestCase {
     }
 
     @MainActor
-    func testHybridDefaultsOnPersistsOptOutAndCombinesSuccessfulAIResponse() async throws {
+    func testHybridDefaultsOnPersistsOptOutAndSkipsAIWhenRulesChangeText() async throws {
         defaults.removeObject(forKey: ClipboardController.hybridKey)
         let input = "seedmux-lite-\n  team"
         let controller = ClipboardController(pasteboard: pasteboard, defaults: defaults,
             cloudNormalize: { text in
-                XCTAssertEqual(text, input)
+                XCTFail("A local correction must not reach AI")
                 return NormalizationReport(text: text, provider: .bjev,
                     decisions: [.init(nextLine: 2, joinProbability: 0.71, spaceProbability: 0.6)], noRequestReason: nil)
             })
@@ -50,11 +50,59 @@ final class ClipboardControllerTests: XCTestCase {
         await fulfillment(of: [finished], timeout: 1)
         controller.onStateChange = nil
         XCTAssertEqual(pasteboard.string(forType: .string), "seedmux-lite-team")
-        XCTAssertTrue(controller.cloudMessage?.contains("AI + rules") == true)
+        XCTAssertEqual(controller.cloudMessage, "Local rules joined wrapped lines; no cloud request.")
         XCTAssertTrue(controller.restoreOriginal())
         XCTAssertEqual(pasteboard.string(forType: .string), input)
         controller.setHybridEnabled(false)
         XCTAssertFalse(ClipboardController(pasteboard: pasteboard, defaults: defaults).isHybridEnabled)
+    }
+
+    @MainActor
+    func testRulesFirstSendsUnchangedTextToEachProvider() async throws {
+        let input = "We need\nmore checks."
+        XCTAssertEqual(LineNormalizer.normalize(input), input)
+        for provider in [CloudProvider.jev, .bjev] {
+            var calls = 0
+            let controller = ClipboardController(pasteboard: pasteboard, defaults: defaults,
+                cloudNormalize: { text in
+                    calls += 1
+                    XCTAssertEqual(text, input)
+                    return NormalizationReport(text: "We need more checks.", provider: provider,
+                        decisions: [.init(nextLine: 2, joinProbability: 1, spaceProbability: 1)],
+                        noRequestReason: nil)
+                })
+            controller.setEnabled(true)
+            controller.setProvider(provider)
+            controller.setHybridEnabled(true)
+            copy(input)
+            let finished = expectation(description: "model reviewed unchanged copy")
+            controller.onStateChange = { if !controller.isProcessing { finished.fulfill() } }
+            controller.poll()
+            await fulfillment(of: [finished], timeout: 1)
+            controller.onStateChange = nil
+            XCTAssertEqual(calls, 1)
+            XCTAssertEqual(pasteboard.string(forType: .string), "We need more checks.")
+            XCTAssertTrue(controller.restoreOriginal())
+            XCTAssertEqual(pasteboard.string(forType: .string), input)
+        }
+    }
+
+    func testRulesFirstWorksWithoutKeyAndStopsAfterPartialCorrection() {
+        let input = wrapped + "\n\nWe need\nmore checks."
+        let expected = joined + "\n\nWe need\nmore checks."
+        for provider in [CloudProvider.jev, .bjev] {
+            let controller = ClipboardController(pasteboard: pasteboard, defaults: defaults)
+            controller.setEnabled(true)
+            controller.setProvider(provider)
+            controller.setHybridEnabled(true)
+            copy(input)
+            controller.poll()
+            XCTAssertFalse(controller.isProcessing)
+            XCTAssertEqual(pasteboard.string(forType: .string), expected)
+            XCTAssertEqual(controller.cloudMessage, "Local rules joined wrapped lines; no cloud request.")
+            XCTAssertTrue(controller.restoreOriginal())
+            XCTAssertEqual(pasteboard.string(forType: .string), input)
+        }
     }
 
     @MainActor
@@ -105,7 +153,7 @@ final class ClipboardControllerTests: XCTestCase {
                 })
             controller.setEnabled(true)
             controller.setProvider(.bjev)
-            controller.setHybridEnabled(true)
+            controller.setHybridEnabled(false)
             let item = NSPasteboardItem()
             item.setString(wrapped, forType: .string)
             for name in names { item.setData(Data(), forType: .init(name)) }

@@ -45,7 +45,7 @@ Save a key through the provider's **API Key…** menu item, then select it under
 
 | Setting | Default | Behavior |
 | --- | --- | --- |
-| Combine AI with Local Rules | On | Combine validated AI judgments with local rules. |
+| Use Local Rules Before AI | On | Apply local corrections immediately; request AI only when rules leave the entire copy unchanged. |
 | Use Local Rules If AI Fails | Off | Allow offline processing when an AI request fails. Otherwise keep the original. |
 
 AI modes send the full eligible plain-text copy to the selected service. Keys are stored separately in macOS Keychain. Requests have a five-second deadline; the original remains available to paste while processing. See [setup, key import and privacy](docs/usage.md).

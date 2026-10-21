@@ -12,7 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let automaticItem = NSMenuItem(title: "Automatically Join Wrapped Lines", action: #selector(toggleAutomatic), keyEquivalent: "")
     private let providerItem = NSMenuItem(title: "Processing Method", action: nil, keyEquivalent: "")
     private let fallbackItem = NSMenuItem(title: "Use Local Rules If AI Fails", action: #selector(toggleLocalFallback), keyEquivalent: "")
-    private let hybridItem = NSMenuItem(title: "Combine AI with Local Rules", action: #selector(toggleHybrid), keyEquivalent: "")
+    private let hybridItem = NSMenuItem(title: "Use Local Rules Before AI", action: #selector(toggleHybrid), keyEquivalent: "")
     private let cloudStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let diagnosticsItem = NSMenuItem(title: "Last Copy Details", action: nil, keyEquivalent: "")
     private let restoreItem = NSMenuItem(title: "Restore Original Text", action: #selector(restore), keyEquivalent: "")

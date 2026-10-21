@@ -40,19 +40,21 @@ The providers share the same bounded request and deterministic reconstruction:
 | Jev / TypeSafe | `https://api.typesafe.ai/v1/systemone` | `jev-1.13.0` | 0.98 |
 | bjev / ByteDance | Internal service (configured in the app) | `bjev` | 0.80 |
 
-AI mode sends the **original text**. Each boundary between adjacent nonblank lines gets two independent TypeSafe `noul` questions in one request: whether to join, and whether a space belongs there if joined. The answers produce three possible actions:
+With **Use Local Rules Before AI** enabled, the controller runs the local normalizer first. If any text changes, it applies the local result and stops, without checking keys or requesting AI. This includes partially corrected copies with remaining breaks. Only completely unchanged copies proceed to AI. Turning the option off preserves AI-only processing.
+
+When requested, AI sends the **original text**. Each boundary between adjacent nonblank lines gets two independent TypeSafe `noul` questions in one request: whether to join, and whether a space belongs there if joined. The answers produce three possible actions:
 
 - `keep`: preserve the original newline and whitespace.
 - `join`: remove the newline and adjacent space/tab padding without inserting a space.
 - `space`: replace the newline and adjacent space/tab padding with one ordinary space.
 
-Names, paths, URLs, short selections, punctuation, lists, code, logs and tabs do not filter out request candidates. The prompt asks the model to distinguish visual wrapping from intentional structure, including Markdown fences and shell continuations. Blank paragraph separators and the final newline stay fixed. The full original lines are shared as context in one request. The model cannot generate replacement text: non-whitespace characters, initial indentation, internal spacing, and all untouched boundaries retain their exact spelling. In AI-only mode, space selection comes solely from the model. Hybrid mode resolves the same validated answers using the rules below; it does not make another request or pre-edit the input.
+Names, paths, URLs, short selections, punctuation, lists, code, logs and tabs do not filter out request candidates. The prompt asks the model to distinguish visual wrapping from intentional structure, including Markdown fences and shell continuations. Blank paragraph separators and the final newline stay fixed. The full original lines are shared as context in one request. The model cannot generate replacement text: non-whitespace characters, initial indentation, internal spacing, and all untouched boundaries retain their exact spelling. In AI-only mode, space selection comes solely from the model. Hybrid mode resolves the same validated answers using the rules below; it does not make another request or pre-edit the input sent to AI.
 
 The response must name the selected provider's model and contain exactly the expected `join_N` and `space_N` answers. Each must have type `noul` and a finite probability in [0, 1]. All answers, including spacing answers for kept boundaries, are validated before editing. In AI-only mode, a join applies only when the visual-wrap probability meets the provider's threshold; otherwise that boundary stays unchanged. For accepted joins, a spacing probability of at least 0.5 inserts one space; below 0.5 inserts none. The spacing question explicitly assumes joining and compares the two concrete spellings. These policies are not accuracy guarantees; old binary-prose calibration does not establish performance for the broader task.
 
 ### Hybrid decisions
 
-The hybrid resolver applies this ordered policy to each original boundary:
+After the local pass leaves the copy unchanged, the hybrid resolver applies this ordered policy to each original boundary in a validated model response:
 
 1. Recognized code, fenced content, logs, headings and new list items keep their boundaries. A list continuation accepted by the existing local rule is not treated as a new item.
 2. An AI wrap probability at or below 0.2 vetoes rule-based joining. This is a policy cutoff, not a measured guarantee that a break is intentional.
@@ -62,7 +64,7 @@ The hybrid resolver applies this ordered policy to each original boundary:
 
 Last Copy Details shows both raw scores and the applied decision reason. Rule disagreement is not hidden behind an adjusted model probability. All other protections, the five-second limit, API failure handling, Pure Paste markers and undo remain unchanged. Switching hybrid mode cancels pending work and requires a new copy. Short ambiguous prose and split English words without an applicable rule can still be missed.
 
-Cloud requests remain limited to **12 KiB of UTF-8 text and 64 candidate boundaries (128 questions)** per copy. Oversized copies, NUL-containing text, and copies without any adjacent nonblank lines are left unchanged without a request or a local pre-pass. The entire admitted plain-text copy is sent, including code and other context. HTML/RTF representations are kept locally for undo and are not sent. This is not a sensitive-data detector; select AI mode only for text you are willing to send to that service. The app never fails over to the other provider.
+Cloud requests remain limited to **12 KiB of UTF-8 text and 64 candidate boundaries (128 questions)** per copy. Oversized copies, NUL-containing text, and copies without any adjacent nonblank lines are left unchanged without a request. In rules-first mode the local pass runs before these cloud limits; local corrections can therefore still apply. The entire admitted plain-text copy is sent, including code and other context. HTML/RTF representations are kept locally for undo and are not sent. This is not a sensitive-data detector; select AI mode only for text you are willing to send to that service. The app never fails over to the other provider.
 
 Missing keys, network failures, authentication errors, rate limits, invalid/missing answers, unexpected model versions, and timeouts keep the original copy by default. Explicitly enabling **Use Local Rules If AI Fails** allows the offline rules on failure only. Saved fallback preferences remain in effect, so uncheck this option if you previously enabled it and now want AI-only decisions. Clipboard-version and undo protections remain unchanged: late answers cannot overwrite a newer copy, and results arriving after the five-second deadline are discarded.
 
